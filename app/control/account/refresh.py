@@ -295,6 +295,13 @@ class AccountRefreshService:
 
         # Infer pool type from live quota data and patch if it changed.
         inferred = infer_pool(windows)  # type: ignore[arg-type]
+        # bart-patch: honour the 'supergrok-override' tag. A genuine
+        # SuperGrok account that has slipped into 'basic' only gets
+        # basic-tier quota fetched, so infer_pool keeps re-deriving
+        # 'basic' — a self-reinforcing trap. A tagged account is never
+        # auto-downgraded below 'super'.
+        if "supergrok-override" in (record.tags or []) and inferred != "super":
+            inferred = "super"
         pool_patch = inferred if inferred != record.pool else None
         if pool_patch:
             logger.info(
