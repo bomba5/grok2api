@@ -24,6 +24,7 @@ from app.platform.errors import (
     RateLimitError,
     UpstreamError,
     ValidationError,
+    rate_limited,
 )
 from app.platform.logging.logger import logger
 from app.platform.runtime.clock import now_s
@@ -136,6 +137,12 @@ _VIDEO_JOBS_LOCK = asyncio.Lock()
 
 
 def _build_message(prompt: str, preset: str) -> str:
+    # The OpenAI video path appends a `--mode=<preset>` flag to the prompt
+    # text. The grok.com web UI does not surface this as literal prompt
+    # text, so it can diverge from web-UI output. `video.append_mode_flag`
+    # (default true) lets the flag be disabled to send the bare prompt.
+    if not get_config().get_bool("video.append_mode_flag", True):
+        return prompt.strip()
     return f"{prompt} {_PRESET_FLAGS.get(preset, '--mode=custom')}".strip()
 
 
@@ -691,6 +698,17 @@ async def _generate_video_with_token(
             )
             referer = f"https://grok.com/imagine/post/{parent_post_id}"
 
+        # Instrumentation: surface the exact upstream video request so the
+        # gateway-vs-webui output gap can be diagnosed. The `message` field
+        # carries the prompt plus any `--mode=` preset flag.
+        logger.info(
+            "video upstream request: segment={}/{} model={} message={!r} "
+            "resolution={} length={}s refs={}",
+            index + 1, total_segments, _VIDEO_MODEL_NAME,
+            payload.get("message", ""), resolution_name, segment_length,
+            len(references) if references else 0,
+        )
+
         async def _segment_progress(progress: int) -> None:
             if progress_cb is None:
                 return
@@ -765,7 +783,10 @@ async def _run_video_with_account(
         now_s_override=now_s(),
     )
     if acct is None:
-        raise RateLimitError("No available accounts for video generation")
+        reset_at = await _acct_dir.next_reset_s(
+            spec.pool_candidates(), int(spec.mode_id)
+        )
+        raise rate_limited("No available accounts for video generation", reset_at)
 
     token = acct.token
     success = False
@@ -853,7 +874,10 @@ async def _run_video_job(
             now_s_override=now_s(),
         )
         if acct is None:
-            raise RateLimitError("No available accounts for video generation")
+            reset_at = await _acct_dir.next_reset_s(
+                spec.pool_candidates(), int(spec.mode_id)
+            )
+            raise rate_limited("No available accounts for video generation", reset_at)
 
         token = acct.token
         success = False

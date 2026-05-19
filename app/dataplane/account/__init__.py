@@ -18,7 +18,7 @@ from .lease import AccountLease, new_lease
 from .selector import current_strategy, select, select_any
 from .sync import bootstrap as _bootstrap, apply_changes
 from . import feedback as fb
-from ..shared.enums import POOL_ID_TO_STR, StatusId
+from ..shared.enums import ALL_MODE_IDS, POOL_ID_TO_STR, StatusId
 
 if TYPE_CHECKING:
     pass
@@ -150,6 +150,47 @@ class AccountDirectory:
             mode_id=mode_id,
             selected_at=ts,
         )
+
+    async def next_reset_s(
+        self,
+        pool_candidates: tuple[int, ...] | int,
+        mode_id: int | None = None,
+        *,
+        now_s_override: int | None = None,
+    ) -> int | None:
+        """Soonest epoch-second at which an account in the given pool(s)
+        becomes usable again — quota-window reset or cooldown expiry.
+
+        Returns None when no future repop time is known (an account is
+        already free, or no reset timestamp has been observed yet). When
+        ``mode_id`` is None or negative, all modes are scanned.
+        """
+        table = self._table
+        if table is None:
+            return None
+        pools: tuple[int, ...] = (
+            (pool_candidates,) if isinstance(pool_candidates, int)
+            else tuple(pool_candidates)
+        )
+        ts = now_s_override if now_s_override is not None else now_s()
+        modes: tuple[int, ...] = (
+            (mode_id,) if (mode_id is not None and mode_id >= 0) else ALL_MODE_IDS
+        )
+        soonest: int | None = None
+        async with self._lock:
+            cooling = table.cooling_until_s_by_idx
+            for m in modes:
+                reset_col = table._reset_col(m)
+                for pool_id in pools:
+                    for idx in table.mode_available.get((pool_id, m), ()):
+                        reset_at = int(reset_col[idx]) if idx < len(reset_col) else 0
+                        cool_at = int(cooling[idx]) if idx < len(cooling) else 0
+                        free_at = max(reset_at, cool_at)
+                        if free_at <= ts:
+                            continue
+                        if soonest is None or free_at < soonest:
+                            soonest = free_at
+        return soonest
 
     async def reserve_any(
         self,

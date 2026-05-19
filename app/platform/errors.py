@@ -38,6 +38,8 @@ class AppError(Exception):
         }
         if "param" in self.details:
             err["param"] = self.details["param"]
+        if "retry_at" in self.details:
+            err["retry_at"] = self.details["retry_at"]
         return {"error": err}
 
 
@@ -64,6 +66,34 @@ class RateLimitError(AppError):
         )
 
 
+def _format_retry(retry_at_s: int | float | None) -> str:
+    """Human-readable repop suffix for a rate-limit message, in local time."""
+    import time
+    from datetime import datetime
+
+    if not retry_at_s or retry_at_s <= 0:
+        return ""
+    local = datetime.fromtimestamp(retry_at_s).strftime("%H:%M")
+    now = time.time()
+    if retry_at_s > now:
+        mins = int((retry_at_s - now) // 60)
+        return f" Usage restores around {local} (in ~{mins}m)."
+    return f" Usage restores around {local}."
+
+
+def rate_limited(message: str, retry_at_s: int | float | None = None) -> "RateLimitError":
+    """Build a RateLimitError, appending the quota repopulation time when known.
+
+    ``retry_at_s`` is an epoch-second timestamp at which an account's quota or
+    cooldown clears. When present it is both appended to the human message and
+    stored in ``details['retry_at']`` for machine-readable consumers.
+    """
+    err = RateLimitError(message + _format_retry(retry_at_s))
+    if retry_at_s and retry_at_s > 0:
+        err.details["retry_at"] = int(retry_at_s)
+    return err
+
+
 class UpstreamError(AppError):
     def __init__(
         self,
@@ -88,6 +118,6 @@ class StreamIdleTimeout(AppError):
 
 __all__ = [
     "ErrorKind", "AppError",
-    "ValidationError", "AuthError", "RateLimitError",
+    "ValidationError", "AuthError", "RateLimitError", "rate_limited",
     "UpstreamError", "StreamIdleTimeout",
 ]

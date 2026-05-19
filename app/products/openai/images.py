@@ -14,7 +14,7 @@ import orjson
 
 from app.platform.logging.logger import logger
 from app.platform.config.snapshot import get_config
-from app.platform.errors import RateLimitError, UpstreamError, ValidationError
+from app.platform.errors import RateLimitError, UpstreamError, ValidationError, rate_limited
 from app.platform.runtime.clock import now_s
 from app.platform.storage import save_local_image
 from app.control.model.registry import resolve as resolve_model
@@ -315,7 +315,8 @@ async def generate(
         now_s_override=now_s(),
     )
     if acct is None:
-        raise RateLimitError("No available accounts for image generation")
+        reset_at = await _acct_dir.next_reset_s(spec.pool_candidates())
+        raise rate_limited("No available accounts for image generation", reset_at)
 
     token       = acct.token
     response_id = make_response_id()
@@ -995,7 +996,10 @@ async def _run_lite_request(
             exclude_tokens=excluded or None,
         )
         if acct is None:
-            raise RateLimitError("No available accounts for image generation")
+            reset_at = await _acct_dir.next_reset_s(
+                spec.pool_candidates(), int(spec.mode_id)
+            )
+            raise rate_limited("No available accounts for image generation", reset_at)
 
         token = acct.token
         adapter = StreamAdapter()
@@ -1072,7 +1076,10 @@ async def _run_lite_request(
             excluded.append(token)
             continue
 
-    raise RateLimitError("No available accounts for image generation")
+    reset_at = await _acct_dir.next_reset_s(
+        spec.pool_candidates(), int(spec.mode_id)
+    )
+    raise rate_limited("No available accounts for image generation", reset_at)
 
 
 async def _run_lite_batch(
@@ -1132,7 +1139,10 @@ async def edit(
         now_s_override  = now_s(),
     )
     if acct is None:
-        raise RateLimitError("No available accounts for image edit")
+        reset_at = await _acct_dir.next_reset_s(
+            spec.pool_candidates(), int(spec.mode_id)
+        )
+        raise rate_limited("No available accounts for image edit", reset_at)
 
     token       = acct.token
     response_id = make_response_id()
