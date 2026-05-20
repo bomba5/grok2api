@@ -194,7 +194,7 @@ def _resolve_video_resolution_name(value: str | None, *, default: str = "720p") 
     return normalized
 
 
-def _resolve_video_preset(value: str | None, *, default: str = "custom") -> str:
+def _resolve_video_preset(value: str | None, *, default: str = "spicy") -> str:
     normalized = (value or default).strip().lower()
     if normalized not in _PRESET_FLAGS:
         allowed = ", ".join(sorted(_PRESET_FLAGS))
